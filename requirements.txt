@@ -1,0 +1,16 @@
+# Runtime dependencies for the Nude Image Detector API.
+#
+# The nudity model (YOLOv8n "320n.onnx", 12 MB) ships *inside* the `nudenet`
+# wheel, so the API works completely offline after `pip install`.
+
+flask>=3.0,<4.0
+gunicorn>=21.2
+requests>=2.31
+Pillow>=10.3
+python-dotenv>=1.0
+
+# Inference stack
+nudenet==3.4.2          # bundles the ONNX weights; pin to keep the label set stable
+onnxruntime>=1.17
+opencv-python-headless>=4.9
+numpy>=1.26

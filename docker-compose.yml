@@ -1,0 +1,43 @@
+services:
+  api:
+    build: .
+    image: nude-image-detector:latest
+    container_name: nude-image-detector
+    restart: unless-stopped
+    ports:
+      - "${NID_PORT:-8000}:8000"
+    environment:
+      NID_HOST: 0.0.0.0
+      NID_PORT: "8000"
+      NID_ENGINE: ${NID_ENGINE:-nudenet}
+      NID_STRICTNESS: ${NID_STRICTNESS:-balanced}
+      NID_LOG_JSON: ${NID_LOG_JSON:-true}
+      NID_LOG_LEVEL: ${NID_LOG_LEVEL:-INFO}
+      NID_API_KEYS: ${NID_API_KEYS:-}
+      NID_MAX_CONTENT_LENGTH: ${NID_MAX_CONTENT_LENGTH:-10485760}
+      NID_MAX_CONCURRENT_INFERENCES: ${NID_MAX_CONCURRENT_INFERENCES:-2}
+      NID_GUNICORN_WORKERS: ${NID_GUNICORN_WORKERS:-2}
+      NID_GUNICORN_THREADS: ${NID_GUNICORN_THREADS:-4}
+      NID_FETCH_ENABLED: ${NID_FETCH_ENABLED:-true}
+      # Deja esto en false salvo para pruebas: permite que la API hable con tu red interna.
+      NID_FETCH_ALLOW_PRIVATE_NETWORKS: "false"
+      NID_FETCH_ALLOWED_HOSTS: ${NID_FETCH_ALLOWED_HOSTS:-}
+      NID_RATE_LIMIT_ENABLED: ${NID_RATE_LIMIT_ENABLED:-true}
+      NID_RATE_LIMIT_REQUESTS: ${NID_RATE_LIMIT_REQUESTS:-120}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    # La inferencia es CPU-bound: limita recursos para que un pico no tumbe el host.
+    deploy:
+      resources:
+        limits:
+          cpus: "${NID_CPU_LIMIT:-2.0}"
+          memory: ${NID_MEM_LIMIT:-1500M}
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
