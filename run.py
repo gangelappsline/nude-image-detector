@@ -1,8 +1,9 @@
 """Development entry point.
 
 ``python run.py`` starts Flask's built-in server with the threaded worker, which
-is fine for local experiments.  Use ``make serve`` (gunicorn) for anything that
-receives real traffic.
+is fine for local experiments.  For real traffic use gunicorn::
+
+    gunicorn -c gunicorn.conf.py wsgi:app
 """
 
 from __future__ import annotations

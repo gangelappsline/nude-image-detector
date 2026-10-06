@@ -251,7 +251,6 @@ class Settings:
     batch_max_items: int = 10
 
     # --- Misc --------------------------------------------------------------
-    expose_openapi: bool = True
     cors_origin: str = "*"
     service_name: str = "nude-image-detector"
     version: str = "1.0.0"
@@ -340,7 +339,6 @@ class Settings:
             cache_maxsize=_int("CACHE_MAXSIZE", 512, minimum=0, maximum=100_000),
             cache_ttl_seconds=_int("CACHE_TTL_SECONDS", 3600, minimum=1),
             batch_max_items=_int("BATCH_MAX_ITEMS", 10, minimum=1, maximum=100),
-            expose_openapi=_bool("EXPOSE_OPENAPI", True),
             cors_origin=_str("CORS_ORIGIN", "*"),
             service_name=_str("SERVICE_NAME", "nude-image-detector"),
             version=_str("VERSION", "1.0.0"),

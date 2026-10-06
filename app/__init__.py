@@ -1,8 +1,8 @@
 """Application factory for the Nude Image Detector API.
 
-``create_app()`` is the single entry point used by the dev server, gunicorn,
-the Docker image and the test-suite, so every environment gets exactly the same
-middleware, error contract and engine wiring.
+``create_app()`` is the single entry point used by the dev server and by
+gunicorn, so every environment gets exactly the same middleware, error contract
+and engine wiring.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import logging
 import time
 import uuid
 
-from flask import Flask, g, jsonify, request
+from flask import Flask, g, request
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from .api.errors import register_error_handlers
@@ -21,46 +21,24 @@ from .core.engine import build_engine
 from .logging_conf import setup_logging
 from .security import RateLimiter, enforce_request_limits, request_cost, require_auth
 from .service import AnalysisService
-from .ui import ui_bp
 
 logger = logging.getLogger(__name__)
 
-#: Endpoints that must stay reachable without credentials (probes, docs).
-PUBLIC_ENDPOINTS = frozenset(
-    {
-        "api.health",
-        "api.ready",
-        "api.info",
-        "api.labels",
-        "api.openapi",
-        "ui.index",
-        "ui.docs",
-        "static",
-    }
-)
-
-DEFAULT_CSP = (
-    "default-src 'self'; "
-    "script-src 'self' 'unsafe-inline'; "
-    "style-src 'self' 'unsafe-inline'; "
-    "img-src 'self' data: blob:; "
-    "connect-src 'self'; "
-    "form-action 'self'; "
-    "frame-ancestors *; "
-    "base-uri 'self'"
-)
+#: Endpoints reachable without credentials: orchestrator probes and discovery.
+PUBLIC_ENDPOINTS = frozenset({"api.health", "api.ready", "api.info", "api.labels"})
 
 
-def create_app(settings: Settings | None = None, *, testing: bool = False) -> Flask:
+def create_app(settings: Settings | None = None) -> Flask:
     """Build and configure the Flask application."""
     settings = settings or Settings.from_env()
     setup_logging(settings.log_level, json_output=settings.log_json)
 
-    app = Flask(__name__, template_folder="templates", static_folder="static")
+    # static_folder=None: this service exposes JSON endpoints only, so Flask's
+    # automatic /static route is removed instead of serving an empty directory.
+    app = Flask(__name__, static_folder=None)
     app.config["NID_SETTINGS"] = settings
     app.config["MAX_CONTENT_LENGTH"] = settings.max_content_length
     app.config["PROPAGATE_EXCEPTIONS"] = True
-    app.config["TESTING"] = testing
     app.json.sort_keys = False
     app.json.ensure_ascii = False  # keep Spanish text readable in payloads
     app.url_map.strict_slashes = False
@@ -91,21 +69,7 @@ def create_app(settings: Settings | None = None, *, testing: bool = False) -> Fl
 
     # --- blueprints ------------------------------------------------------ #
     app.register_blueprint(api_bp)
-    app.register_blueprint(ui_bp)
     register_error_handlers(app, settings)
-
-    if settings.expose_openapi:
-        from .openapi import build_openapi_spec
-
-        spec = build_openapi_spec(settings)
-
-        @app.get("/openapi.json", endpoint="openapi")
-        def openapi_spec():  # pragma: no cover - trivial
-            return jsonify(spec)
-
-        PUBLIC_ENDPOINTS_LOCAL = PUBLIC_ENDPOINTS | {"openapi"}
-    else:
-        PUBLIC_ENDPOINTS_LOCAL = PUBLIC_ENDPOINTS
 
     # --- middleware ------------------------------------------------------ #
     @app.before_request
@@ -114,16 +78,14 @@ def create_app(settings: Settings | None = None, *, testing: bool = False) -> Fl
         g.started_at = time.monotonic()
         g.json_payload = None
 
-        endpoint = request.endpoint or ""
-        if endpoint in PUBLIC_ENDPOINTS_LOCAL:
+        if (request.endpoint or "") in PUBLIC_ENDPOINTS:
             return
 
         require_auth(request, settings)
         if settings.rate_limit_enabled:
-            decision = enforce_request_limits(
+            g.rate_limit = enforce_request_limits(
                 request, settings, limiter, cost=request_cost(request)
             )
-            g.rate_limit = decision
 
     @app.after_request
     def _after(response):
@@ -132,22 +94,18 @@ def create_app(settings: Settings | None = None, *, testing: bool = False) -> Fl
             response.headers.setdefault("X-Request-ID", request_id)
 
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
-        response.headers.setdefault("Referrer-Policy", "no-referrer")
-        response.headers.setdefault("Content-Security-Policy", DEFAULT_CSP)
+        # Analysis responses can embed a base64 image: never cache them.
+        response.headers.setdefault("Cache-Control", "no-store")
         if settings.cors_origin:
             response.headers.setdefault("Access-Control-Allow-Origin", settings.cors_origin)
             response.headers.setdefault("Vary", "Origin")
             response.headers.setdefault(
-                "Access-Control-Allow-Headers", "Content-Type, X-API-Key, Authorization, X-Request-ID"
+                "Access-Control-Allow-Headers",
+                "Content-Type, X-API-Key, Authorization, X-Request-ID",
             )
-            response.headers.setdefault("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-
-        endpoint = request.endpoint or ""
-        if endpoint.startswith("api.") and endpoint not in {"api.health", "api.ready"}:
-            # Analysis responses can embed a base64 image: never cache them.
-            response.headers.setdefault("Cache-Control", "no-store")
-        elif endpoint in {"api.health", "api.ready"}:
-            response.headers.setdefault("Cache-Control", "no-store")
+            response.headers.setdefault(
+                "Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS"
+            )
 
         decision = getattr(g, "rate_limit", None)
         if decision is not None:
@@ -155,7 +113,7 @@ def create_app(settings: Settings | None = None, *, testing: bool = False) -> Fl
                 response.headers.setdefault(header, value)
 
         started = getattr(g, "started_at", None)
-        if started is not None and endpoint not in {"api.health", "api.ready", "static"}:
+        if started is not None and (request.endpoint or "") not in {"api.health", "api.ready"}:
             logger.info(
                 "http_request method=%s path=%s status=%d ms=%.1f",
                 request.method,
@@ -167,8 +125,7 @@ def create_app(settings: Settings | None = None, *, testing: bool = False) -> Fl
                     "path": request.path,
                     "status": response.status_code,
                     "duration_ms": round((time.monotonic() - started) * 1000, 1),
-                    "endpoint": endpoint or None,
-                    "user_agent": (request.headers.get("User-Agent") or "")[:200],
+                    "endpoint": request.endpoint,
                 },
             )
         return response
@@ -209,4 +166,4 @@ def _request_id() -> str:
     return uuid.uuid4().hex[:16]
 
 
-__all__ = ["DEFAULT_CSP", "PUBLIC_ENDPOINTS", "create_app"]
+__all__ = ["create_app", "PUBLIC_ENDPOINTS"]

@@ -31,14 +31,9 @@ ENV/
 .env.*
 !.env.example
 
-# Testing / tooling caches
-.pytest_cache/
+# Tooling caches
 .mypy_cache/
 .ruff_cache/
-.coverage
-.coverage.*
-htmlcov/
-coverage.xml
 
 # Models (the ONNX weights ship inside the `nudenet` wheel; only override paths are local)
 models/
